@@ -1,0 +1,14 @@
+[Unit]
+Description=Launches collect_metrics.py
+Wants=network-online.target
+After=multi-user.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=/u01/code/ucs_performance_collector/collect_vmmetrics.sh
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=startuplast.target
+
