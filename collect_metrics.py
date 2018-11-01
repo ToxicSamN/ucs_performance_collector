@@ -101,7 +101,7 @@ def main(statsq):
             'username': args.username,
             'password': args.get_passwd()
         })
-        main_logger.info('Connecting to UCS {}'.format(ucs.name))
+        main_logger.info('Connecting to UCS {}'.format(ucs.ucs))
         ucs.connect()
         main_logger.info('Executing statsd parallelism')
         statsd = StatsCollector(ucs)
@@ -110,9 +110,9 @@ def main(statsq):
         return 0
 
     except BaseException as e:
+        main_logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
         if ucs._connected:
             ucs.disconnect()
-        main_logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
 
 
 if __name__ == '__main__':
