@@ -9,12 +9,12 @@ import logging
 from configparser import ConfigParser
 from configparser import NoOptionError
 from datetime import datetime
-from pyucs.credentials import Credential
-from pyucs.ucs import Ucs
+from pyucs.credentials.credstore import Credential
+from pyucs.ucs.handler import Ucs
 from pyucs.statsd.collector import StatsCollector
 from pyucs.statsd.parse import Parser
-from pyucs.influx import InfluxDB
-from pyucs.logging import Logger
+from pyucs.influx.client import InfluxDB
+from pyucs.logging.handler import Logger
 from pycrypt.encryption import AESCipher
 
 
