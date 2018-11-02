@@ -1,4 +1,4 @@
-VERSION = "1.1.0"
+VERSION = "1.3.0"
 
 import os
 import sys
@@ -18,12 +18,14 @@ from pyucs.logging.handler import Logger
 from pycrypt.encryption import AESCipher
 
 
+# Global Loggers variable
 LOGGERS = Logger(log_file='/var/log/ucs_perf.log', error_log_file='/var/log/ucs_perf_error.log')
 
 
 class Args:
     """
-    Args Class handles the cmdline arguments passed to the code
+    Args Class handles the cmdline arguments passed to the code and
+    parses througha conf file
     Usage can be stored to a variable or called by Args().<property>
     """
     DEBUG = False
@@ -35,7 +37,7 @@ class Args:
     def __init__(self):
         self.__aes_key = None
 
-        # Retrieve and set script arguments for use throughout
+        # Retrieve and set script arguments from commandline
         parser = argparse.ArgumentParser(description="Performance Collector Agent.")
         parser.add_argument('-debug', '--debug',
                             required=False, action='store_true',
@@ -44,6 +46,8 @@ class Args:
                             required=False, action='store',
                             help='identifies location of the config file')
         cmd_args = parser.parse_args()
+
+        # Parse through the provided conf
         parser = ConfigParser()
         parser.read(cmd_args.config_file)
 
@@ -70,43 +74,69 @@ class Args:
 
         # [METRICS]
         self.ucsNameOrIP = parser.get('metrics', 'ucsNameOrIP')
+        self.ucsNameOrIP = [u.strip() for u in self.ucsNameOrIP.split(',')]
         self.username = parser.get('metrics', 'username')
         self.__password = parser.get('metrics', 'password')
         if self.__password:
             self.store_passwd()
 
     def get_passwd(self):
+        """
+        Returns the stored encrypted password from memory
+        :return: clear_text password
+        """
         if self.__password:
             aes_cipher = AESCipher()
             return aes_cipher.decrypt(self.__password, self.__aes_key)
 
     def store_passwd(self, clr_passwd):
+        """
+        Takes the clear text password and stores it in a variable with AES encryption.
+        :param clr_passwd:
+        :return: None, stores the password in the protected __ variable
+        """
         aes_cipher = AESCipher()
         self.__aes_key = aes_cipher.AES_KEY
         self.__password = aes_cipher.encrypt(clr_passwd)
 
 
 def main(statsq):
+    """
+    This is the main workhorse of this agent
+    :param statsq: multiprocessing.queue
+    :return: 0
+    """
 
+    # obtain the args
     args = Args()
 
     try:
-
+        # setup logging
         main_logger = LOGGERS.get_logger('main')
         main_logger.info('Starting collect_metrics.py:  ARGS: {}'.format(args.__dict__))
 
+        # store the password in encrypted fashion and not clear text
         args.store_passwd(Credential(args.username).get_credential()['password'])
-        ucs = Ucs(**{
-            'ip': args.ucsNameOrIP,
-            'username': args.username,
-            'password': args.get_passwd()
-        })
-        main_logger.info('Connecting to UCS {}'.format(ucs.ucs))
-        ucs.connect()
-        main_logger.info('Executing statsd parallelism')
-        statsd = StatsCollector(ucs)
-        statsd.query_stats(statsq)
 
+        # the metrics.conf file has the option of using comma separated values
+        # so that multiple UCS doamins can be collected on in a single agent.
+        # This loops through one or many of those ucs.
+        for ucsname in args.ucsNameOrIP:
+            # initialize the Ucs object with the username and password
+            ucs = Ucs(**{
+                'ip': ucsname,
+                'username': args.username,
+                'password': args.get_passwd()
+            })
+            main_logger.info('Connecting to UCS {}'.format(ucs.ucs))
+            ucs.connect()
+            main_logger.info('Executing statsd parallelism for {}'.format(ucs.ucs))
+            # initialize the statsd agent for this ucs
+            statsd = StatsCollector(ucs)
+            # start the statsd query process
+            statsd.query_stats(statsq)
+            # disconnect from ucs prior to moving to the next ucs
+            ucs.disconnect()
         return 0
 
     except BaseException as e:
@@ -117,16 +147,23 @@ def main(statsq):
 
 if __name__ == '__main__':
 
+    # retrieve the arguments and environment configs
     args = Args()
     root_logger = LOGGERS.get_logger(__name__)
     root_logger.info('Code Version : {}'.format(VERSION))
     error_count = 0
 
+    # Setup the multiprocessing queues
     queue_manager = multiprocessing.Manager()
+    # statsd_queue for the parser process
     sq = queue_manager.Queue()
+    # influxdb_queue for the inlfuxdb process to send the stats
     iq = queue_manager.Queue()
 
+    # Setup the background processes
+    # parser process
     parse_proc = multiprocessing.Process(target=Parser, kwargs={'statsq': sq, 'influxq': iq})
+    # influxdb process
     influx_proc = multiprocessing.Process(target=InfluxDB, kwargs={'influxq': iq,
                                                                    'host': args.TelegrafIP,
                                                                    'port': args.prod_port,
@@ -137,11 +174,14 @@ if __name__ == '__main__':
                                                                    'retries': 3
                                                                    }
                                           )
+    # start the background processes
     root_logger.info('Starting parser subprocess')
     parse_proc.start()
     root_logger.info('Starting influxdb subprocess')
     influx_proc.start()
 
+    # This code will run as a service and should run in an infinite loop until the service
+    # stops the process
     while True:
 
         # check if the background process for parsing and influx are still running
@@ -220,6 +260,6 @@ if __name__ == '__main__':
             else:
                 error_count = error_count + 1
                 pass
-
+    # final catch all background process termination
     parse_proc.terminate()
     influx_proc.terminate()
