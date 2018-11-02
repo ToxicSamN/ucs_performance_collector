@@ -1,4 +1,4 @@
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 
 import os
 import sys
@@ -152,6 +152,7 @@ if __name__ == '__main__':
     root_logger = LOGGERS.get_logger(__name__)
     root_logger.info('Code Version : {}'.format(VERSION))
     error_count = 0
+    main_program_running_threshold = 60
 
     # Setup the multiprocessing queues
     queue_manager = multiprocessing.Manager()
@@ -213,7 +214,7 @@ if __name__ == '__main__':
                 main_proc.start()
                 # Join the process so that the While loop is halted until the process is complete
                 # or times out after 60 seconds
-                main_proc.join(60)
+                main_proc.join(main_program_running_threshold)
 
                 # if the process has been running for longer than 60 seconds then
                 # the program releases control back to root. This is a condition
@@ -236,7 +237,7 @@ if __name__ == '__main__':
             #  since pulling 1 minutes of perf data then should sleep
             #  sample interval time minus the execution time
             exec_time_delta = end_time - start_time
-            sleep_time = int(exec_time_delta.seconds)
+            sleep_time = main_program_running_threshold - int(exec_time_delta.seconds)
             if sleep_time >= 1:
                 root_logger.info('Main program pausing for {} seconds'.format(sleep_time))
                 time.sleep(sleep_time)
