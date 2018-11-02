@@ -229,16 +229,16 @@ if __name__ == '__main__':
 
                     # TODO: add an alerting module that sends an alert either through email or snmp
 
-                root_logger.info('Execution Complete')
                 end_time = datetime.now()
+                root_logger.info('Execution Completed in {} seconds'.format((end_time-start_time).seconds))
 
             # evaluate the timing to determine how long to sleep
             #  since pulling 1 minutes of perf data then should sleep
             #  sample interval time minus the execution time
-
             exec_time_delta = end_time - start_time
             sleep_time = int(exec_time_delta.seconds)
             if sleep_time >= 1:
+                root_logger.info('Main program pausing for {} seconds'.format(sleep_time))
                 time.sleep(sleep_time)
             time.sleep(1)
             error_count = 0
