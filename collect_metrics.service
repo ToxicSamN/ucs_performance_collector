@@ -1,0 +1,15 @@
+[Unit]
+Description=Launches collect_metrics.py
+Wants=network-online.target
+After=multi-user.target network-online.target
+
+[Service]
+Type=simple
+EnvrionmentFile=/etc/profile.d/credstore.sh
+ExecStart=/u01/code/ucs_performance_collector/collect_metrics.sh
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=startuplast.target
+
