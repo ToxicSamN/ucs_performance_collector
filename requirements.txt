@@ -9,7 +9,7 @@ pycryptodome==3.7.0
 pyparsing==2.2.2
 python-dateutil==2.7.4
 pytz==2018.6
-pyucs-samn==1.6.0
+pyucs-samn==1.7.0
 requests==2.20.0
 six==1.11.0
 ucsmsdk==0.9.5
