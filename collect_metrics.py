@@ -222,6 +222,14 @@ def waiter(process_pool, timeout_secs=60):
 
 if __name__ == '__main__':
 
+    # root = logging.getLogger()
+    # root.setLevel(logging.DEBUG)
+    # handler = logging.StreamHandler(sys.stdout)
+    # handler.setLevel(logging.DEBUG)
+    # formatter = logging.Formatter("%(asctime)s\t%(name)s\t%(levelname)s\t%(message)s")
+    # handler.setFormatter(formatter)
+    # root.addHandler(handler)
+
     # retrieve the arguments and environment configs
     args = Args()
     args.store_passwd(Credential(args.username).get_credential()['password'])
@@ -275,8 +283,8 @@ if __name__ == '__main__':
                 f.close()
             code_version = line.split("=")[1].replace('\"', '').strip('\n').strip()
             if not code_version == VERSION:
-                logging.exception("Code Version change from current version {} to new version {}".format(VERSION,
-                                                                                                         code_version))
+                logging.info("Code Version change from current version {} to new version {}".format(VERSION,
+                                                                                                    code_version))
                 # Exit the agent.
                 # Since the agent should be ran as a service then the agent should automatically be restarted
                 sys.exit(-1)

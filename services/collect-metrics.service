@@ -5,8 +5,8 @@ After=multi-user.target network-online.target
 
 [Service]
 Type=simple
-EnvrionmentFile=/etc/profile.d/credstore.sh
-ExecStart=/u01/code/ucs_performance_collector/collect_metrics.sh
+EnvironmentFile=/etc/profile.d/credstore.sh
+ExecStart=/u01/code/ucs_performance_collector/services/collect-metrics.sh
 Restart=always
 RestartSec=10s
 
