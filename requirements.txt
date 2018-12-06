@@ -1,2 +1,1 @@
-pyucs-samn==2.0.1
-
+pyucs-samn==2.0.2
