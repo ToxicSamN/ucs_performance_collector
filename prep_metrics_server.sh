@@ -15,6 +15,7 @@ usage(){
 	h_desc="\t\tprovide usage information."
 	printf "Usage: \n  $0 [OPTIONS]\n\nOPTIONS:\n"
 	printf "  -p | --python-download-link\t$p_desc\n  -t | --telegraf-download-link\t$t_desc\n  -u | --git-user\t$u_desc\n  -r | --git-repo-url\t$r_desc\n  -x | --proxy\t$x_desc\n  -h | --help\t$h_desc\n\n\n"
+	exit 1
 }
 
 PYTHON_LINK="https://www.python.org/ftp/python/3.7.1/Python-3.7.1.tgz"
@@ -124,8 +125,8 @@ sudo mkdir /u01/api/key
 sudo mkdir /etc/metrics
   
 # Setup the permissions and owner for smpadmins (internal unix group)
-sudo chown -R :smpadmin /u01/code
-sudo chmod 674 -R /u01/code
+sudo chown -R :smpadmin /u01
+sudo chmod 674 -R /u01
 
 # Clone GIT REPO
 cd /u01/code
