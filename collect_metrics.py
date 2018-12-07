@@ -1,4 +1,4 @@
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 import os
 import sys
@@ -304,7 +304,7 @@ if __name__ == '__main__':
                         'password': args.get_passwd()
                     })
                     ucs_pool.append(ucs)
-                    process_pool.append(multiprocessing.Process(target=main, args=(sq, ucs,)))
+                    process_pool.append(multiprocessing.Process(target=main, args=(sq, ucs,), name=ucsm))
                 # Join the process so that the While loop is halted until the process is complete
                 # or times out after 60 seconds
                 waiter(process_pool, main_program_running_threshold)
