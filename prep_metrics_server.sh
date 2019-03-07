@@ -20,17 +20,18 @@ usage(){
 
 PYTHON_LINK="https://www.python.org/ftp/python/3.7.1/Python-3.7.1.tgz"
 TELEGRAF_LINK="https://dl.influxdata.com/telegraf/releases/telegraf-1.9.0-1.x86_64.rpm"
+GIT_LINK="https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.9.5.tar.xz"
 
 while : 
 do
 	case "$1" in 
 		-p | --python-download-link)	
 			shift
-			$PYTHON_LINK="$1"
+			PYTHON_LINK="$1"
 			;;
 		-t | --telegraf-download-link)	
 			shift
-			$TELEGRAF_LINK="$1"
+			TELEGRAF_LINK="$1"
 			;;
 		-u | --git-user)	
 			shift
@@ -73,19 +74,32 @@ fi
 sudo yum update -y
 sudo yum groupinstall -y "development tools"
 sudo yum install -y zlib-devel bzip2-devel openssl-devel ncurses-devel sqlite-devel readline-devel tk-devel gdbm-devel db4-devel libpcap-devel xz-devel expat-devel libffi-devel
+sudo yum install -y htop
+
+# Download and Install newer GIT
+#  RHEL/CENTOS ships with older versions of GIT, so lets update it
+cd /tmp
+wget $GIT_LINK -e use_proxy=yes -e https_proxy=$PROXY_SERVER
+tar -xvf git-*
+cd git-*
+make configure
+./configure --prefix=/usr
+make all doc info
+sudo make install install-doc install-html install-info
+
 
 # Download and Install Python
 cd /tmp
 wget $PYTHON_LINK -e use_proxy=yes -e https_proxy=$PROXY_SERVER
-tar -xvf Python-3.7.1.tgz
-cd Python-3.7.1
+tar -xvf Python-3.*
+cd Python-3.*
 ./configure --prefix=/usr/local --enable-shared LDFLAGS="-Wl,-rpath /usr/local/lib"
 make && sudo make altinstall
 
 # Download and install telegraf
 cd /tmp
 wget $TELEGRAF_LINK -e use_proxy=yes -e https_proxy=$PROXY_SERVER
-sudo rpm -Uvh telegraf-1.9.0-1.x86_64.rpm
+sudo rpm -Uvh telegraf-1*.rpm
 
 # Cleanup tmp
 sudo rm -f /tmp/Python-*
@@ -94,6 +108,11 @@ sudo rm -f /tmp/telegraf*
 
 # Need to setup the 3rd hard disk using LVM
 #  You should verify that /dev/sdc is the correct device for your 3rd hard disk before continuing
+for BUS in /sys/class/scsi_host/host*/scan
+do
+   echo "- - -" >  ${BUS}
+done
+
 sudo pvcreate /dev/sdc
 sudo vgcreate vg01 /dev/sdc
 sudo lvcreate -l 100%FREE -n vol01 vg01
@@ -131,7 +150,7 @@ sudo chmod 674 -R /u01
 # Clone GIT REPO
 cd /u01/code
 git clone $GIT_REPO_URL
-(sudo crontab -l 2>/dev/null; echo "* * * * * /u01/code/ucs_performance_collector/services/git_update.sh") | sudo crontab -
+# (sudo crontab -l 2>/dev/null; echo "* * * * * /u01/code/ucs_performance_collector/services/git_update.sh") | sudo crontab -
 
 sudo chown -R root:smpadmin /u01/code
 sudo chmod 674 -R /u01/code
