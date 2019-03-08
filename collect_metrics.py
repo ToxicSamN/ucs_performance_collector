@@ -1,4 +1,4 @@
-VERSION = "1.3.0"
+VERSION = "1.4.10"
 
 import os
 import sys
@@ -25,7 +25,7 @@ LOGGERS = Logger(log_file='/var/log/ucs_perf.log', error_log_file='/var/log/ucs_
 class Args:
     """
     Args Class handles the cmdline arguments passed to the code and
-    parses througha conf file
+    parses through a conf file
     Usage can be stored to a variable or called by Args().<property>
     """
     DEBUG = False
@@ -42,7 +42,7 @@ class Args:
         parser.add_argument('-debug', '--debug',
                             required=False, action='store_true',
                             help='Used for Debug level information')
-        parser.add_argument('-c', '--config-file', default='/etc/metrics/metrics.conf',
+        parser.add_argument('-c', '--config-file', default='/etc/metrics/ucs_metrics.conf',
                             required=False, action='store',
                             help='identifies location of the config file')
         cmd_args = parser.parse_args()
@@ -100,7 +100,100 @@ class Args:
         self.__password = aes_cipher.encrypt(clr_passwd)
 
 
-def main(statsq):
+def new_bg_agents(num, sq, iq):
+    logger = LOGGERS.get_logger('new_bg_agents')
+    try:
+        args = Args()
+        proc_pool = []
+        # only need a single parser process as this process is as effecient as can be
+
+        for x in range(int(num)):
+            proc_pool.append(multiprocessing.Process(name='influx_proc_{}'.format(x),
+                                                     target=InfluxDB,
+                                                     kwargs={'influxq': iq,
+                                                             'host': args.TelegrafIP,
+                                                             'port': args.prod_port,
+                                                             'username': 'anonymous',
+                                                             'password': 'anonymous',
+                                                             'database': 'perf_stats',
+                                                             'timeout': 5,
+                                                             'retries': 3,
+                                                             }
+                                                     ))
+            proc_pool.append(multiprocessing.Process(name='parser_proc_{}'.format(x),
+                                                     target=Parser,
+                                                     kwargs={'statsq': sq, 'influxq': iq}))
+
+        return proc_pool
+    except BaseException as e:
+        logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+    return None
+
+
+def check_bg_process(proc_pool=[], proc=None):
+    logger = LOGGERS.get_logger('check_bg_processes')
+    try:
+        if proc:
+            if not proc.is_alive():
+                logger.debug('Process: {}, Not Alive'.format(proc.name))
+                if proc.pid:
+                    logger.debug('Process: {}, PID: {}, ExitCode {}'.format(proc.name, proc.pid, proc.exitcode))
+                    proc.terminate()
+                logger.info('Process: {}, Starting Process'.format(proc.name))
+                proc.start()
+        elif proc_pool:
+            for proc in proc_pool:
+                if not proc.is_alive():
+                    logger.debug('Process: {}, Not Alive'.format(proc.name))
+                    if proc.pid:
+                        logger.debug('Process: {}, PID: {}, ExitCode {}'.format(proc.name, proc.pid, proc.exitcode))
+                        proc.terminate()
+                    logger.info('Process: {}, Starting Process'.format(proc.name))
+                    proc.start()
+    except BaseException as e:
+        logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+
+
+def main_worker(func_args):
+    """
+    Multiprocess main function for collecting on multiple ucs domains at one time
+    :param func_args: [ucs_name, statsq]
+    :return: none
+    """
+    ucsm_name, statsq, logger = func_args
+    args = Args()
+    logger.info(
+        'Starting process worker for ucs {}\n func_args: {}\nARGS: {}'.format(ucsm_name,
+                                                                              func_args,
+                                                                              args.__dict__))
+
+    try:
+        # initialize the Ucs object with the username and password
+        logger.info('Initialize UCS object for {}'.format(ucsm_name))
+        ucs = Ucs(**{
+            'ip': ucsm_name,
+            'username': args.username,
+            'password': args.get_passwd()
+        })
+        logger.info('Connecting to UCS {}'.format(ucs.ucs))
+        ucs.connect()
+        logger.info('Executing statsd parallelism for {}'.format(ucs.ucs))
+        # initialize the statsd agent for this ucs
+        statsd = StatsCollector(ucs)
+        # start the statsd query process
+        statsd.query_stats(statsq)
+        # disconnect from ucs prior to moving to the next ucs
+        ucs.disconnect()
+    except BaseException as e:
+        logger.error('Damn!\nQueue size: {}, Ucs: {}'.format(statsq.qsize(), ucs.ucs))
+        logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+        if ucs._connected:
+            ucs.disconnect()
+
+    return 0
+
+
+def main(statsq, ucs):
     """
     This is the main workhorse of this agent
     :param statsq: multiprocessing.queue
@@ -109,49 +202,95 @@ def main(statsq):
 
     # obtain the args
     args = Args()
-
+    # setup logging
+    logger = LOGGERS.get_logger('main')
     try:
-        # setup logging
-        main_logger = LOGGERS.get_logger('main')
-        main_logger.info('Starting collect_metrics.py:  ARGS: {}'.format(args.__dict__))
+        logger.info('Starting collect_metrics.py:  ARGS: {}'.format(args.__dict__))
 
-        # store the password in encrypted fashion and not clear text
-        args.store_passwd(Credential(args.username).get_credential()['password'])
+        args = Args()
+        logger.info('Starting process worker for ucs {}'.format(ucs.ucs))
 
-        # the metrics.conf file has the option of using comma separated values
-        # so that multiple UCS doamins can be collected on in a single agent.
-        # This loops through one or many of those ucs.
-        for ucsname in args.ucsNameOrIP:
-            # initialize the Ucs object with the username and password
-            ucs = Ucs(**{
-                'ip': ucsname,
-                'username': args.username,
-                'password': args.get_passwd()
-            })
-            main_logger.info('Connecting to UCS {}'.format(ucs.ucs))
+        try:
+            logger.info('Connecting to UCS {}'.format(ucs.ucs))
             ucs.connect()
-            main_logger.info('Executing statsd parallelism for {}'.format(ucs.ucs))
+
+            logger.info('Executing statsd parallelism for {}'.format(ucs.ucs))
             # initialize the statsd agent for this ucs
             statsd = StatsCollector(ucs)
             # start the statsd query process
             statsd.query_stats(statsq)
             # disconnect from ucs prior to moving to the next ucs
             ucs.disconnect()
-        return 0
+        except BaseException as e:
+            logger.error('Damn!\nQueue size: {}, Ucs: {}'.format(statsq.qsize(), ucs.ucs))
+            logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+            if ucs._connected:
+                ucs.disconnect()
+
+        if ucs._connected:
+            ucs.disconnect()
+        # return 0
 
     except BaseException as e:
-        main_logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+        logger.error('Houston we have a problem!\nQueue size: {}'.format(statsq.qsize()))
+        logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
         if ucs._connected:
             ucs.disconnect()
 
 
+def waiter(process_pool, timeout_secs=60):
+
+    logger = LOGGERS.get_logger('Process Waiter')
+    start_time = datetime.now()
+    proc_status = {}
+    for proc in process_pool:
+        proc.start()
+        logger.info('Process: {}, Started: {}'.format(proc.name, proc.is_alive()))
+        proc_status.update({proc.name: proc.is_alive()})
+
+    time.sleep(1)
+    # Just going to loop until the timeout has been reached or all processes have completed
+    while True:
+        # can't just have a while loop without it doing something so....
+        for proc in process_pool:
+            # track the running status of each process True/False
+            proc_status[proc.name] = proc.is_alive()
+
+        # if all of the processes are not running any longer then break
+        if list(proc_status.values()).count(False) == len(process_pool):
+            logger.info('Process Status: {}'.format(proc_status))
+            break
+        # if the timeout value has been reached then break
+        elif (datetime.now() - start_time).seconds >= timeout_secs:
+            logger.error('Timeout Reached!')
+            logger.info('Process Status: {}'.format(proc_status))
+            break
+
+
 if __name__ == '__main__':
+
+    # root = logging.getLogger()
+    # root.setLevel(logging.DEBUG)
+    # handler = logging.handlers.RotatingFileHandler('/var/log/ucs_debug.log',
+    #                                                    mode='a',
+    #                                                    maxBytes=8388608,
+    #                                                    backupCount=8,
+    #                                                    encoding='utf8',
+    #                                                    delay=False)
+    # handler.setLevel(logging.DEBUG)
+    # formatter = logging.Formatter("%(asctime)s\t%(name)s\t%(levelname)s\t%(message)s")
+    # handler.setFormatter(formatter)
+    # root.addHandler(handler)
 
     # retrieve the arguments and environment configs
     args = Args()
+    args.store_passwd(Credential(args.username).get_credential()['password'])
     root_logger = LOGGERS.get_logger(__name__)
     root_logger.info('Code Version : {}'.format(VERSION))
     error_count = 0
+    main_program_running_threshold = 60
+    over_watch_threshold = (24 * (60 * 60)) - 13  # 24 hours x 60 seconds - 13 seconds
+    ucs_pool = []
 
     # Setup the multiprocessing queues
     queue_manager = multiprocessing.Manager()
@@ -161,34 +300,31 @@ if __name__ == '__main__':
     iq = queue_manager.Queue()
 
     # Setup the background processes
-    # parser process
-    parse_proc = multiprocessing.Process(target=Parser, kwargs={'statsq': sq, 'influxq': iq})
-    # influxdb process
-    influx_proc = multiprocessing.Process(target=InfluxDB, kwargs={'influxq': iq,
-                                                                   'host': args.TelegrafIP,
-                                                                   'port': args.prod_port,
-                                                                   'username': 'anonymous',
-                                                                   'password': 'anonymous',
-                                                                   'database': 'perf_stats',
-                                                                   'timeout': 5,
-                                                                   'retries': 3
-                                                                   }
-                                          )
-    # start the background processes
-    root_logger.info('Starting parser subprocess')
-    parse_proc.start()
-    root_logger.info('Starting influxdb subprocess')
-    influx_proc.start()
+    agent_pool = new_bg_agents(multiprocessing.cpu_count(), sq=sq, iq=iq)
+    watch_24_start = datetime.now()
 
     # This code will run as a service and should run in an infinite loop until the service
     # stops the process
     while True:
 
+        watch_24_now = datetime.now()
+        watch_delta = watch_24_now - watch_24_start
+        if watch_delta.seconds >= over_watch_threshold:
+            logging.info(
+                "Overall runtime running {} seconds. Restarting the program to flush memory and processes".format(
+                    watch_delta.seconds))
+            # Exit the agent.
+            # Wait for the influx_q to be flushed
+            while not iq.empty():
+                root_logger.debug('Waiting on the influx_q to flush out before restarting the program...')
+
+            # Since the agent should be ran as a service then the agent should automatically be restarted
+            for proc in agent_pool:
+                proc.terminate()
+            sys.exit(-1)
+
         # check if the background process for parsing and influx are still running
-        if not parse_proc.is_alive():
-            parse_proc.start()
-        if not influx_proc.is_alive():
-            influx_proc.start()
+        check_bg_process(proc_pool=agent_pool)
 
         try:
             # Perform a VERSION check with the code and if there is an update then restart the agent
@@ -197,8 +333,8 @@ if __name__ == '__main__':
                 f.close()
             code_version = line.split("=")[1].replace('\"', '').strip('\n').strip()
             if not code_version == VERSION:
-                logging.exception("Code Version change from current version {} to new version {}".format(VERSION,
-                                                                                                         code_version))
+                logging.info("Code Version change from current version {} to new version {}".format(VERSION,
+                                                                                                    code_version))
                 # Exit the agent.
                 # Since the agent should be ran as a service then the agent should automatically be restarted
                 sys.exit(-1)
@@ -206,60 +342,79 @@ if __name__ == '__main__':
             start_main = True
             if start_main:
                 start_main = False
-                start_time = datetime.now()
-                root_logger.info('Executing MAIN...')
+                root_logger.info('Executing MAIN Processes...')
                 # execute the main function as a process so that it can be monitored for running time
-                main_proc = multiprocessing.Process(target=main, args=(sq,))
-                main_proc.start()
+                process_pool = []
+                ucs_pool = []
+                for ucsm in args.ucsNameOrIP:
+                    ucs = Ucs(**{
+                        'ip': ucsm,
+                        'username': args.username,
+                        'password': args.get_passwd()
+                    })
+                    root_logger.info('Connecting to UCS {}'.format(ucs.ucs))
+                    ucs.connect()
+                    ucs_pool.append(ucs)
+                    process_pool.append(multiprocessing.Process(target=main, args=(sq, ucs,), name=ucsm))
+                start_time = datetime.now()
                 # Join the process so that the While loop is halted until the process is complete
                 # or times out after 60 seconds
-                main_proc.join(60)
+                waiter(process_pool, main_program_running_threshold)
 
                 # if the process has been running for longer than 60 seconds then
                 # the program releases control back to root. This is a condition
                 # check to see if that is indeed what happened
-                if main_proc.is_alive():
-                    # process ran longer than 60 seconds and since collection times are in 60 second intervals
-                    # this main process needs to be terminated and restarted
-                    main_proc.terminate()
-                    root_logger.error(
-                        'MAIN program running too long. Start Time: {}, End Time: {}'.format(start_time.ctime(),
-                                                                                             datetime.now().ctime()))
-                    start_main = True
+                for proc in process_pool:
+                    if proc.is_alive():
+                        # process ran longer than 60 seconds and since collection times are in 60 second intervals
+                        # this main process needs to be terminated and restarted
+                        proc.terminate()
+                        root_logger.error(
+                            'MAIN process {} running too long. Start Time: {}, End Time: {}'.format(proc.name,
+                                                                                                    start_time.ctime(),
+                                                                                                    datetime.now().ctime()))
+                        start_main = True
 
-                    # TODO: add an alerting module that sends an alert either through email or snmp
+                        # TODO: add an alerting module that sends an alert either through email or snmp
 
-                root_logger.info('Execution Complete')
                 end_time = datetime.now()
+                root_logger.info('Execution Completed in {} seconds'.format((end_time-start_time).seconds))
 
             # evaluate the timing to determine how long to sleep
             #  since pulling 1 minutes of perf data then should sleep
             #  sample interval time minus the execution time
-
             exec_time_delta = end_time - start_time
-            sleep_time = int(exec_time_delta.seconds)
+            sleep_time = main_program_running_threshold - int(exec_time_delta.seconds)
             if sleep_time >= 1:
+                root_logger.info('Main program pausing for {} seconds'.format(sleep_time))
                 time.sleep(sleep_time)
             time.sleep(1)
             error_count = 0
+            for u in ucs_pool:
+                    u.disconnect()
         except BaseException as e:
             if isinstance(e, SystemExit):
                 logging.info('Agent exiting..')
                 logging.info('Parser process exiting..')
-                parse_proc.terminate()
-                logging.info('InfluxDB process exiting..')
-                influx_proc.terminate()
+                for proc in agent_pool:
+                    proc.terminate()
+                for u in ucs_pool:
+                        u.disconnect()
                 break
             root_logger.exception('Exception: {} \n Args: {}'.format(e, e.args))
             start_main = True
             time.sleep(1)
+            for u in ucs_pool:
+                    u.disconnect()
             if error_count > 20:
-                parse_proc.terminate()
-                influx_proc.terminate()
+                for proc in agent_pool:
+                    proc.terminate()
                 raise e
             else:
                 error_count = error_count + 1
                 pass
     # final catch all background process termination
-    parse_proc.terminate()
-    influx_proc.terminate()
+    for proc in agent_pool:
+        proc.terminate()
+    for u in ucs_pool:
+            u.disconnect()

@@ -2,5 +2,5 @@
 
 # Auto updating the git repo
 
-cd /u01/code/ucs_performance_collector
+cd $1
 git pull
