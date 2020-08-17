@@ -1,4 +1,4 @@
-VERSION = "1.4.10"
+VERSION = "1.4.11"
 
 import os
 import sys
@@ -399,13 +399,13 @@ if __name__ == '__main__':
                 for proc in agent_pool:
                     proc.terminate()
                 for u in ucs_pool:
-                        u.disconnect()
+                    u.disconnect()
                 break
             root_logger.exception('Exception: {} \n Args: {}'.format(e, e.args))
             start_main = True
             time.sleep(1)
             for u in ucs_pool:
-                    u.disconnect()
+                u.disconnect()
             if error_count > 20:
                 for proc in agent_pool:
                     proc.terminate()
@@ -417,4 +417,4 @@ if __name__ == '__main__':
     for proc in agent_pool:
         proc.terminate()
     for u in ucs_pool:
-            u.disconnect()
+        u.disconnect()
