@@ -1,1 +1,2 @@
 pyucs-samn>=2.0.5
+PyYAML>=5.3.1
