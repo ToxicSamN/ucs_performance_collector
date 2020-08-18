@@ -1,4 +1,4 @@
-VERSION = "1.4.11"
+VERSION = "1.4.12"
 
 import os
 import sys
@@ -14,101 +14,31 @@ from pyucs.ucs.handler import Ucs
 from pyucs.statsd.collector import StatsCollector
 from pyucs.statsd.parse import Parser
 from pyucs.influx.client import InfluxDB
-from pyucs.logging.handler import Logger
-from pycrypt.encryption import AESCipher
+from log.setup import LoggerSetup
+from args.handle import Args
 
+BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+parent_dir = BASE_DIR.replace(os.path.basename(BASE_DIR), '')
+sys.path.append(BASE_DIR)
 
-# Global Loggers variable
-LOGGERS = Logger(log_file='/var/log/ucs_perf.log', error_log_file='/var/log/ucs_perf_error.log')
+args = Args()
 
+log_setup = LoggerSetup(yaml_file=f'{BASE_DIR}/logging_config.yml')
+if args.DEBUG:
+    log_setup.set_loglevel(loglevel='DEBUG')
 
-class Args:
-    """
-    Args Class handles the cmdline arguments passed to the code and
-    parses through a conf file
-    Usage can be stored to a variable or called by Args().<property>
-    """
-    DEBUG = False
-    MOREF_TYPE = ''
-    LOG_DIR = ''
-    LOG_SIZE = ''
-    MAX_KEEP = ''
+log_setup.setup()
 
-    def __init__(self):
-        self.__aes_key = None
-
-        # Retrieve and set script arguments from commandline
-        parser = argparse.ArgumentParser(description="Performance Collector Agent.")
-        parser.add_argument('-debug', '--debug',
-                            required=False, action='store_true',
-                            help='Used for Debug level information')
-        parser.add_argument('-c', '--config-file', default='/etc/metrics/ucs_metrics.conf',
-                            required=False, action='store',
-                            help='identifies location of the config file')
-        cmd_args = parser.parse_args()
-
-        # Parse through the provided conf
-        parser = ConfigParser()
-        parser.read(cmd_args.config_file)
-
-        # [GLOBAL]
-        self.bin = str(parser.get('global', 'WorkingDirectory'))
-        self.tmpdir = str(parser.get('global', 'TempDirectory'))
-
-        # [LOGGING]
-        self.LOG_DIR = str(parser.get('logging', 'LogDir'))
-        self.LOG_SIZE = parser.get('logging', 'LogRotateSizeMB')
-        self.MAX_KEEP = parser.get('logging', 'MaxFilesKeep')
-        self.secdir = parser.get('global', 'SecureDir')
-        try:
-            debug_check = parser.get('logging', 'Debug')
-            if debug_check == 'True':
-                self.DEBUG = True
-        except NoOptionError:
-            pass
-
-        # [INFLUXDB]
-        self.TelegrafIP = parser.get('influxdb', 'TelegrafIP')
-        self.nonprod_port = parser.get('influxdb', 'nonprod_port')
-        self.prod_port = parser.get('influxdb', 'prod_port')
-
-        # [METRICS]
-        self.ucsNameOrIP = parser.get('metrics', 'ucsNameOrIP')
-        self.ucsNameOrIP = [u.strip() for u in self.ucsNameOrIP.split(',')]
-        self.username = parser.get('metrics', 'username')
-        self.__password = parser.get('metrics', 'password')
-        if self.__password:
-            self.store_passwd()
-
-    def get_passwd(self):
-        """
-        Returns the stored encrypted password from memory
-        :return: clear_text password
-        """
-        if self.__password:
-            aes_cipher = AESCipher()
-            return aes_cipher.decrypt(self.__password, self.__aes_key)
-
-    def store_passwd(self, clr_passwd):
-        """
-        Takes the clear text password and stores it in a variable with AES encryption.
-        :param clr_passwd:
-        :return: None, stores the password in the protected __ variable
-        """
-        aes_cipher = AESCipher()
-        self.__aes_key = aes_cipher.AES_KEY
-        self.__password = aes_cipher.encrypt(clr_passwd)
+logger = logging.getLogger(__name__)
 
 
 def new_bg_agents(num, sq, iq):
-    logger = LOGGERS.get_logger('new_bg_agents')
     try:
-        args = Args()
         proc_pool = []
         # only need a single parser process as this process is as effecient as can be
 
         for x in range(int(num)):
-            proc_pool.append(multiprocessing.Process(name='influx_proc_{}'.format(x),
+            proc_pool.append(multiprocessing.Process(name=f'influx_proc_{x}',
                                                      target=InfluxDB,
                                                      kwargs={'influxq': iq,
                                                              'host': args.TelegrafIP,
@@ -120,38 +50,38 @@ def new_bg_agents(num, sq, iq):
                                                              'retries': 3,
                                                              }
                                                      ))
-            proc_pool.append(multiprocessing.Process(name='parser_proc_{}'.format(x),
+            proc_pool.append(multiprocessing.Process(name=f'parser_proc_{x}',
                                                      target=Parser,
                                                      kwargs={'statsq': sq, 'influxq': iq}))
 
         return proc_pool
     except BaseException as e:
-        logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+        logger.exception(f'Exception: {e}, \n Args: {e.args}')
     return None
 
 
 def check_bg_process(proc_pool=[], proc=None):
-    logger = LOGGERS.get_logger('check_bg_processes')
+
     try:
         if proc:
             if not proc.is_alive():
-                logger.debug('Process: {}, Not Alive'.format(proc.name))
+                logger.debug(f'Process: {proc.name}, Not Alive')
                 if proc.pid:
-                    logger.debug('Process: {}, PID: {}, ExitCode {}'.format(proc.name, proc.pid, proc.exitcode))
+                    logger.debug(f'Process: {proc.name}, PID: {proc.pid}, ExitCode {proc.exitcode}')
                     proc.terminate()
-                logger.info('Process: {}, Starting Process'.format(proc.name))
+                logger.info(f'Process: {proc.name}, Starting Process')
                 proc.start()
         elif proc_pool:
             for proc in proc_pool:
                 if not proc.is_alive():
-                    logger.debug('Process: {}, Not Alive'.format(proc.name))
+                    logger.debug(f'Process: {proc.name}, Not Alive')
                     if proc.pid:
-                        logger.debug('Process: {}, PID: {}, ExitCode {}'.format(proc.name, proc.pid, proc.exitcode))
+                        logger.debug(f'Process: {proc.name}, PID: {proc.pid}, ExitCode {proc.exitcode}')
                         proc.terminate()
-                    logger.info('Process: {}, Starting Process'.format(proc.name))
+                    logger.info(f'Process: {proc.name}, Starting Process')
                     proc.start()
     except BaseException as e:
-        logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+        logger.exception(f'Exception: {e}, \n Args: {e.args}')
 
 
 def main_worker(func_args):
@@ -160,24 +90,22 @@ def main_worker(func_args):
     :param func_args: [ucs_name, statsq]
     :return: none
     """
-    ucsm_name, statsq, logger = func_args
+    ucsm_name, statsq = func_args
     args = Args()
-    logger.info(
-        'Starting process worker for ucs {}\n func_args: {}\nARGS: {}'.format(ucsm_name,
-                                                                              func_args,
-                                                                              args.__dict__))
+    log = logging.getLogger("__main__.main_worker")
+    log.info(f'Starting process worker for ucs {ucsm_name}\n func_args: {func_args}\nARGS: {args.__dict__}')
 
     try:
         # initialize the Ucs object with the username and password
-        logger.info('Initialize UCS object for {}'.format(ucsm_name))
+        log.info(f'Initialize UCS object for {ucsm_name}')
         ucs = Ucs(**{
             'ip': ucsm_name,
             'username': args.username,
             'password': args.get_passwd()
         })
-        logger.info('Connecting to UCS {}'.format(ucs.ucs))
+        log.info(f'Connecting to UCS {ucs.ucs}')
         ucs.connect()
-        logger.info('Executing statsd parallelism for {}'.format(ucs.ucs))
+        log.info(f'Executing statsd parallelism for {ucs.ucs}')
         # initialize the statsd agent for this ucs
         statsd = StatsCollector(ucs)
         # start the statsd query process
@@ -185,8 +113,8 @@ def main_worker(func_args):
         # disconnect from ucs prior to moving to the next ucs
         ucs.disconnect()
     except BaseException as e:
-        logger.error('Damn!\nQueue size: {}, Ucs: {}'.format(statsq.qsize(), ucs.ucs))
-        logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+        log.error(f'Damn!\nQueue size: {statsq.qsize()}, Ucs: {ucs.ucs}')
+        log.exception(f'{ucs.ucs}: Exception: {e}, \n Args: {e.args}')
         if ucs._connected:
             ucs.disconnect()
 
@@ -203,18 +131,16 @@ def main(statsq, ucs):
     # obtain the args
     args = Args()
     # setup logging
-    logger = LOGGERS.get_logger('main')
+    log = logging.getLogger("__main__.main")
     try:
-        logger.info('Starting collect_metrics.py:  ARGS: {}'.format(args.__dict__))
-
-        args = Args()
-        logger.info('Starting process worker for ucs {}'.format(ucs.ucs))
+        log.info(f'Starting collect_metrics.py:  ARGS: {args.__dict__}')
+        log.info(f'Starting process worker for ucs {ucs.ucs}')
 
         try:
-            logger.info('Connecting to UCS {}'.format(ucs.ucs))
+            log.info(f'Connecting to UCS {ucs.ucs}')
             ucs.connect()
 
-            logger.info('Executing statsd parallelism for {}'.format(ucs.ucs))
+            log.info(f'Executing statsd parallelism for {ucs.ucs}')
             # initialize the statsd agent for this ucs
             statsd = StatsCollector(ucs)
             # start the statsd query process
@@ -222,8 +148,8 @@ def main(statsq, ucs):
             # disconnect from ucs prior to moving to the next ucs
             ucs.disconnect()
         except BaseException as e:
-            logger.error('Damn!\nQueue size: {}, Ucs: {}'.format(statsq.qsize(), ucs.ucs))
-            logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+            log.error(f'Damn!\nQueue size: {statsq.qsize()}, Ucs: {ucs.ucs}')
+            log.exception(f'Exception: {e}, \n Args: {e.args}')
             if ucs._connected:
                 ucs.disconnect()
 
@@ -232,20 +158,19 @@ def main(statsq, ucs):
         # return 0
 
     except BaseException as e:
-        logger.error('Houston we have a problem!\nQueue size: {}'.format(statsq.qsize()))
-        logger.exception('Exception: {}, \n Args: {}'.format(e, e.args))
+        log.error(f'{ucs.ucs}: Houston we have a problem!\nQueue size: {statsq.qsize()}')
+        log.exception(f'Exception: {e}, \n Args: {e.args}')
         if ucs._connected:
             ucs.disconnect()
 
 
 def waiter(process_pool, timeout_secs=60):
 
-    logger = LOGGERS.get_logger('Process Waiter')
     start_time = datetime.now()
     proc_status = {}
     for proc in process_pool:
         proc.start()
-        logger.info('Process: {}, Started: {}'.format(proc.name, proc.is_alive()))
+        logger.info(f'Process: {proc.name}, Started: {proc.is_alive()}')
         proc_status.update({proc.name: proc.is_alive()})
 
     time.sleep(1)
@@ -258,35 +183,20 @@ def waiter(process_pool, timeout_secs=60):
 
         # if all of the processes are not running any longer then break
         if list(proc_status.values()).count(False) == len(process_pool):
-            logger.info('Process Status: {}'.format(proc_status))
+            logger.info(f'Process Status: {proc_status}')
             break
         # if the timeout value has been reached then break
         elif (datetime.now() - start_time).seconds >= timeout_secs:
             logger.error('Timeout Reached!')
-            logger.info('Process Status: {}'.format(proc_status))
+            logger.info(f'Process Status: {proc_status}')
             break
 
 
 if __name__ == '__main__':
 
-    # root = logging.getLogger()
-    # root.setLevel(logging.DEBUG)
-    # handler = logging.handlers.RotatingFileHandler('/var/log/ucs_debug.log',
-    #                                                    mode='a',
-    #                                                    maxBytes=8388608,
-    #                                                    backupCount=8,
-    #                                                    encoding='utf8',
-    #                                                    delay=False)
-    # handler.setLevel(logging.DEBUG)
-    # formatter = logging.Formatter("%(asctime)s\t%(name)s\t%(levelname)s\t%(message)s")
-    # handler.setFormatter(formatter)
-    # root.addHandler(handler)
-
     # retrieve the arguments and environment configs
-    args = Args()
     args.store_passwd(Credential(args.username).get_credential()['password'])
-    root_logger = LOGGERS.get_logger(__name__)
-    root_logger.info('Code Version : {}'.format(VERSION))
+    logger.info('Code Version : {VERSION}')
     error_count = 0
     main_program_running_threshold = 60
     over_watch_threshold = (24 * (60 * 60)) - 13  # 24 hours x 60 seconds - 13 seconds
@@ -311,12 +221,11 @@ if __name__ == '__main__':
         watch_delta = watch_24_now - watch_24_start
         if watch_delta.seconds >= over_watch_threshold:
             logging.info(
-                "Overall runtime running {} seconds. Restarting the program to flush memory and processes".format(
-                    watch_delta.seconds))
+                f"Overall runtime running {watch_delta.seconds} seconds. Restarting the program to flush memory and processes")
             # Exit the agent.
             # Wait for the influx_q to be flushed
             while not iq.empty():
-                root_logger.debug('Waiting on the influx_q to flush out before restarting the program...')
+                logger.debug('Waiting on the influx_q to flush out before restarting the program...')
 
             # Since the agent should be ran as a service then the agent should automatically be restarted
             for proc in agent_pool:
@@ -333,8 +242,7 @@ if __name__ == '__main__':
                 f.close()
             code_version = line.split("=")[1].replace('\"', '').strip('\n').strip()
             if not code_version == VERSION:
-                logging.info("Code Version change from current version {} to new version {}".format(VERSION,
-                                                                                                    code_version))
+                logging.info(f"Code Version change from current version {VERSION} to new version {code_version}")
                 # Exit the agent.
                 # Since the agent should be ran as a service then the agent should automatically be restarted
                 sys.exit(-1)
@@ -342,7 +250,7 @@ if __name__ == '__main__':
             start_main = True
             if start_main:
                 start_main = False
-                root_logger.info('Executing MAIN Processes...')
+                logger.info('Executing MAIN Processes...')
                 # execute the main function as a process so that it can be monitored for running time
                 process_pool = []
                 ucs_pool = []
@@ -352,7 +260,7 @@ if __name__ == '__main__':
                         'username': args.username,
                         'password': args.get_passwd()
                     })
-                    root_logger.info('Connecting to UCS {}'.format(ucs.ucs))
+                    logger.info(f'Connecting to UCS {ucs.ucs}')
                     ucs.connect()
                     ucs_pool.append(ucs)
                     process_pool.append(multiprocessing.Process(target=main, args=(sq, ucs,), name=ucsm))
@@ -369,16 +277,14 @@ if __name__ == '__main__':
                         # process ran longer than 60 seconds and since collection times are in 60 second intervals
                         # this main process needs to be terminated and restarted
                         proc.terminate()
-                        root_logger.error(
-                            'MAIN process {} running too long. Start Time: {}, End Time: {}'.format(proc.name,
-                                                                                                    start_time.ctime(),
-                                                                                                    datetime.now().ctime()))
+                        logger.error(
+                            f'MAIN process {proc.name} running too long. Start Time: {start_time.ctime()}, End Time: {datetime.now().ctime()}')
                         start_main = True
 
                         # TODO: add an alerting module that sends an alert either through email or snmp
 
                 end_time = datetime.now()
-                root_logger.info('Execution Completed in {} seconds'.format((end_time-start_time).seconds))
+                logger.info(f'Execution Completed in {(end_time-start_time).seconds} seconds')
 
             # evaluate the timing to determine how long to sleep
             #  since pulling 1 minutes of perf data then should sleep
@@ -386,7 +292,7 @@ if __name__ == '__main__':
             exec_time_delta = end_time - start_time
             sleep_time = main_program_running_threshold - int(exec_time_delta.seconds)
             if sleep_time >= 1:
-                root_logger.info('Main program pausing for {} seconds'.format(sleep_time))
+                logger.info(f'Main program pausing for {sleep_time} seconds')
                 time.sleep(sleep_time)
             time.sleep(1)
             error_count = 0
@@ -401,7 +307,7 @@ if __name__ == '__main__':
                 for u in ucs_pool:
                     u.disconnect()
                 break
-            root_logger.exception('Exception: {} \n Args: {}'.format(e, e.args))
+            logger.exception(f'Exception: {e} \n Args: {e.args}')
             start_main = True
             time.sleep(1)
             for u in ucs_pool:
